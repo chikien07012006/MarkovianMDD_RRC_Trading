@@ -4,3 +4,5 @@ __pycache__/
 
 data/raw/*.csv
 data/processed/*.csv
+
+medmigcr-survey.html

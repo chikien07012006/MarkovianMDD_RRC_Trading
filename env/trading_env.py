@@ -9,6 +9,8 @@ import numpy as np
 import pandas as pd
 from gymnasium import spaces
 
+from reward import build_markovian_mdd_reward
+
 
 RewardFn = Callable[["TradingEnv", dict[str, Any]], float]
 
@@ -32,6 +34,10 @@ class TradingEnv(gym.Env[np.ndarray, np.ndarray]):
         initial_nav: float = 1.0,
         transaction_cost_rate: float = 0.001,
         reward_fn: RewardFn | None = None,
+        reward_mode: str = "default",
+        lambda_base: float = 0.0,
+        alpha: float = 0.0,
+        vix_feature_name: str = "vix_zscore_252",
         render_mode: str | None = None,
     ) -> None:
         super().__init__()
@@ -39,12 +45,19 @@ class TradingEnv(gym.Env[np.ndarray, np.ndarray]):
         self.render_mode = render_mode
         self.initial_nav = float(initial_nav)
         self.transaction_cost_rate = float(transaction_cost_rate)
-        self.reward_fn = reward_fn
         self.min_nav = 1e-12
+        self.vix_feature_name = vix_feature_name
 
         self.feature_columns = feature_columns or self.DEFAULT_FEATURE_COLUMNS
         self.data = self._load_data(data)
         self._validate_data()
+        self.reward_fn = self._resolve_reward_fn(
+            reward_fn=reward_fn,
+            reward_mode=reward_mode,
+            lambda_base=lambda_base,
+            alpha=alpha,
+            vix_feature_name=vix_feature_name,
+        )
 
         self.close_prices = self.data["close"].to_numpy(dtype=np.float64)
         self.dates = self.data["date"].dt.strftime("%Y-%m-%d").to_numpy()
@@ -97,6 +110,34 @@ class TradingEnv(gym.Env[np.ndarray, np.ndarray]):
         if self.transaction_cost_rate < 0:
             raise ValueError("transaction_cost_rate must be non-negative.")
 
+        if self.vix_feature_name not in self.data.columns:
+            raise ValueError(f"Dataset is missing required RRC feature column: {self.vix_feature_name}")
+
+    def _resolve_reward_fn(
+        self,
+        reward_fn: RewardFn | None,
+        reward_mode: str,
+        lambda_base: float,
+        alpha: float,
+        vix_feature_name: str,
+    ) -> RewardFn | None:
+        if reward_fn is not None:
+            return reward_fn
+
+        if reward_mode == "default":
+            return None
+
+        if reward_mode == "markovian_mdd_rrc":
+            return build_markovian_mdd_reward(
+                lambda_base=lambda_base,
+                alpha=alpha,
+                vix_feature_name=vix_feature_name,
+            )
+
+        raise ValueError(
+            "reward_mode must be one of {'default', 'markovian_mdd_rrc'} when reward_fn is not provided."
+        )
+
     def _parse_action(self, action: np.ndarray | float | list[float]) -> float:
         action_array = np.asarray(action, dtype=np.float32).reshape(-1)
         if action_array.size != 1:
@@ -119,6 +160,23 @@ class TradingEnv(gym.Env[np.ndarray, np.ndarray]):
         return np.concatenate([self.market_features[self.current_step], portfolio_state]).astype(
             np.float32
         )
+
+    def _get_market_feature_dict(self, step: int) -> dict[str, float]:
+        return {
+            feature_name: float(self.data.iloc[step][feature_name]) for feature_name in self.feature_columns
+        }
+
+    def _get_observation_dict(self, step: int) -> dict[str, float]:
+        observation_dict = self._get_market_feature_dict(step)
+        observation_dict.update(
+            {
+                "current_cash_ratio": float(self.current_cash_ratio),
+                "current_weight": float(self.current_weight),
+                "unrealized_pnl": float(self._compute_unrealized_pnl()),
+                "running_peak": float(self.running_peak),
+            }
+        )
+        return observation_dict
 
     def _build_info(self) -> dict[str, Any]:
         return {
@@ -161,6 +219,8 @@ class TradingEnv(gym.Env[np.ndarray, np.ndarray]):
 
         target_weight = self._parse_action(action)
         previous_observation = self._get_observation().copy()
+        previous_observation_dict = self._get_observation_dict(self.current_step)
+        market_features_t = self._get_market_feature_dict(self.current_step)
         previous_running_peak = self.running_peak
 
         previous_step = self.current_step
@@ -203,6 +263,9 @@ class TradingEnv(gym.Env[np.ndarray, np.ndarray]):
             "previous_date": self.dates[previous_step],
             "current_date": self.dates[self.current_step],
             "previous_observation": previous_observation,
+            "previous_observation_dict": previous_observation_dict,
+            "market_features_t": market_features_t,
+            "vix_zscore_t": float(market_features_t[self.vix_feature_name]),
             "previous_running_peak": previous_running_peak,
             "previous_nav": previous_nav,
             "nav_after_cost": nav_after_cost,
