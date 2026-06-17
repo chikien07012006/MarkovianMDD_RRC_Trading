@@ -7,12 +7,14 @@ from .rrc import compute_lambda_rrc
 
 
 @dataclass(slots=True)
-class MarkovianMDDReward:
-    lambda_base: float
-    alpha: float
+class MarkovianMDDRRCReward:
+    lambda_base: float = 1.0
+    alpha: float = 0.0
     vix_feature_name: str = "vix_zscore_252"
     clamp_min: float = -3.0
     clamp_max: float = 3.0
+    return_key: str = "portfolio_log_return"
+    drawdown_key: str = "drawdown"
 
     def __post_init__(self) -> None:
         if self.lambda_base < 0:
@@ -25,10 +27,10 @@ class MarkovianMDDReward:
     def __call__(self, env: Any, transition: dict[str, Any]) -> float:
         del env
 
-        if "portfolio_log_return" not in transition:
-            raise KeyError("transition must contain 'portfolio_log_return'.")
-        if "drawdown" not in transition:
-            raise KeyError("transition must contain 'drawdown'.")
+        if self.return_key not in transition:
+            raise KeyError(f"transition must contain '{self.return_key}'.")
+        if self.drawdown_key not in transition:
+            raise KeyError(f"transition must contain '{self.drawdown_key}'.")
 
         vix_zscore_t = self._resolve_vix_signal(transition)
         lambda_rrc = compute_lambda_rrc(
@@ -39,8 +41,8 @@ class MarkovianMDDReward:
             clamp_max=self.clamp_max,
         )
 
-        portfolio_log_return = float(transition["portfolio_log_return"])
-        drawdown_t_plus_1 = float(transition["drawdown"])
+        portfolio_log_return = float(transition[self.return_key])
+        drawdown_t_plus_1 = float(transition[self.drawdown_key])
         drawdown_penalty = lambda_rrc * drawdown_t_plus_1
         reward = portfolio_log_return - drawdown_penalty
 
@@ -67,17 +69,25 @@ class MarkovianMDDReward:
         )
 
 
-def build_markovian_mdd_reward(
-    lambda_base: float,
-    alpha: float,
+def build_markovian_mdd_rrc_reward(
+    lambda_base: float = 1.0,
+    alpha: float = 0.0,
     vix_feature_name: str = "vix_zscore_252",
     clamp_min: float = -3.0,
     clamp_max: float = 3.0,
-) -> MarkovianMDDReward:
-    return MarkovianMDDReward(
+    return_key: str = "portfolio_log_return",
+    drawdown_key: str = "drawdown",
+) -> MarkovianMDDRRCReward:
+    return MarkovianMDDRRCReward(
         lambda_base=lambda_base,
         alpha=alpha,
         vix_feature_name=vix_feature_name,
         clamp_min=clamp_min,
         clamp_max=clamp_max,
+        return_key=return_key,
+        drawdown_key=drawdown_key,
     )
+
+
+MarkovianMDDReward = MarkovianMDDRRCReward
+build_markovian_mdd_reward = build_markovian_mdd_rrc_reward

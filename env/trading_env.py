@@ -9,7 +9,12 @@ import numpy as np
 import pandas as pd
 from gymnasium import spaces
 
-from reward import build_markovian_mdd_reward
+from reward import (
+    build_differential_sharpe_reward,
+    build_markovian_mdd_rrc_reward,
+    build_markovian_mdd_static_reward,
+    build_variance_penalized_reward,
+)
 
 
 RewardFn = Callable[["TradingEnv", dict[str, Any]], float]
@@ -35,8 +40,9 @@ class TradingEnv(gym.Env[np.ndarray, np.ndarray]):
         transaction_cost_rate: float = 0.001,
         reward_fn: RewardFn | None = None,
         reward_mode: str = "default",
-        lambda_base: float = 0.0,
+        lambda_base: float = 1.0,
         alpha: float = 0.0,
+        reward_kwargs: dict[str, Any] | None = None,
         vix_feature_name: str = "vix_zscore_252",
         render_mode: str | None = None,
     ) -> None:
@@ -56,6 +62,7 @@ class TradingEnv(gym.Env[np.ndarray, np.ndarray]):
             reward_mode=reward_mode,
             lambda_base=lambda_base,
             alpha=alpha,
+            reward_kwargs=reward_kwargs,
             vix_feature_name=vix_feature_name,
         )
 
@@ -119,24 +126,67 @@ class TradingEnv(gym.Env[np.ndarray, np.ndarray]):
         reward_mode: str,
         lambda_base: float,
         alpha: float,
+        reward_kwargs: dict[str, Any] | None,
         vix_feature_name: str,
     ) -> RewardFn | None:
         if reward_fn is not None:
             return reward_fn
 
-        if reward_mode == "default":
+        normalized_reward_mode = reward_mode.strip().lower()
+        if normalized_reward_mode in {"default", "log_return", "r0"}:
             return None
 
-        if reward_mode == "markovian_mdd_rrc":
-            return build_markovian_mdd_reward(
-                lambda_base=lambda_base,
-                alpha=alpha,
-                vix_feature_name=vix_feature_name,
+        resolved_reward_kwargs = dict(reward_kwargs or {})
+        resolved_reward_kwargs.setdefault("lambda_penalty", lambda_base)
+        resolved_reward_kwargs.setdefault("lambda_base", lambda_base)
+        resolved_reward_kwargs.setdefault("alpha", alpha)
+        resolved_reward_kwargs.setdefault("vix_feature_name", vix_feature_name)
+
+        if normalized_reward_mode in {"variance_penalized", "variance_penalized_return", "r1"}:
+            return build_variance_penalized_reward(
+                lambda_penalty=float(resolved_reward_kwargs["lambda_penalty"]),
+                return_key=str(resolved_reward_kwargs.get("return_key", "portfolio_log_return")),
+            )
+
+        if normalized_reward_mode in {"differential_sharpe", "dsr", "r2"}:
+            return build_differential_sharpe_reward(
+                eta=float(resolved_reward_kwargs.get("eta", 0.01)),
+                return_key=str(resolved_reward_kwargs.get("return_key", "portfolio_log_return")),
+                epsilon=float(resolved_reward_kwargs.get("epsilon", 1e-12)),
+            )
+
+        if normalized_reward_mode in {"markovian_mdd", "markovian_mdd_static", "r3"}:
+            return build_markovian_mdd_static_reward(
+                lambda_penalty=float(resolved_reward_kwargs["lambda_penalty"]),
+                return_key=str(resolved_reward_kwargs.get("return_key", "portfolio_log_return")),
+                drawdown_key=str(resolved_reward_kwargs.get("drawdown_key", "drawdown")),
+            )
+
+        if normalized_reward_mode in {"markovian_mdd_rrc", "r4"}:
+            return build_markovian_mdd_rrc_reward(
+                lambda_base=float(resolved_reward_kwargs["lambda_base"]),
+                alpha=float(resolved_reward_kwargs["alpha"]),
+                vix_feature_name=str(resolved_reward_kwargs["vix_feature_name"]),
+                clamp_min=float(resolved_reward_kwargs.get("clamp_min", -3.0)),
+                clamp_max=float(resolved_reward_kwargs.get("clamp_max", 3.0)),
+                return_key=str(resolved_reward_kwargs.get("return_key", "portfolio_log_return")),
+                drawdown_key=str(resolved_reward_kwargs.get("drawdown_key", "drawdown")),
             )
 
         raise ValueError(
-            "reward_mode must be one of {'default', 'markovian_mdd_rrc'} when reward_fn is not provided."
+            "reward_mode must be one of "
+            "{'default', 'log_return', 'variance_penalized', 'differential_sharpe', "
+            "'markovian_mdd', 'markovian_mdd_rrc', 'r0', 'r1', 'r2', 'r3', 'r4'} "
+            "when reward_fn is not provided."
         )
+
+    def _reset_reward_fn_state(self) -> None:
+        if self.reward_fn is None:
+            return
+
+        reset_method = getattr(self.reward_fn, "reset", None)
+        if callable(reset_method):
+            reset_method(self)
 
     def _parse_action(self, action: np.ndarray | float | list[float]) -> float:
         action_array = np.asarray(action, dtype=np.float32).reshape(-1)
@@ -208,6 +258,7 @@ class TradingEnv(gym.Env[np.ndarray, np.ndarray]):
         self.current_weight = 0.0
         self.current_cash_ratio = 1.0
         self.terminated = False
+        self._reset_reward_fn_state()
 
         observation = self._get_observation()
         info = self._build_info()
