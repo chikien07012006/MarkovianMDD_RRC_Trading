@@ -6,3 +6,5 @@ data/raw/*.csv
 data/processed/*.csv
 
 medmigcr-survey.html
+results/models
+results/tables

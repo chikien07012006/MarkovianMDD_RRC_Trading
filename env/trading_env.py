@@ -13,6 +13,7 @@ from reward import (
     build_differential_sharpe_reward,
     build_markovian_mdd_rrc_reward,
     build_markovian_mdd_static_reward,
+    build_profit_only_reward,
     build_variance_penalized_reward,
 )
 
@@ -133,10 +134,18 @@ class TradingEnv(gym.Env[np.ndarray, np.ndarray]):
             return reward_fn
 
         normalized_reward_mode = reward_mode.strip().lower()
-        if normalized_reward_mode in {"default", "log_return", "r0"}:
+        resolved_reward_kwargs = dict(reward_kwargs or {})
+
+        if normalized_reward_mode in {"default", "log_return", "profit_only", "r0"}:
+            if normalized_reward_mode == "default":
+                return None
+            return build_profit_only_reward(
+                return_key=str(resolved_reward_kwargs.get("return_key", "portfolio_log_return")),
+            )
+
+        if normalized_reward_mode in {"default_none"}:
             return None
 
-        resolved_reward_kwargs = dict(reward_kwargs or {})
         resolved_reward_kwargs.setdefault("lambda_penalty", lambda_base)
         resolved_reward_kwargs.setdefault("lambda_base", lambda_base)
         resolved_reward_kwargs.setdefault("alpha", alpha)
@@ -175,7 +184,7 @@ class TradingEnv(gym.Env[np.ndarray, np.ndarray]):
 
         raise ValueError(
             "reward_mode must be one of "
-            "{'default', 'log_return', 'variance_penalized', 'differential_sharpe', "
+            "{'default', 'log_return', 'profit_only', 'variance_penalized', 'differential_sharpe', "
             "'markovian_mdd', 'markovian_mdd_rrc', 'r0', 'r1', 'r2', 'r3', 'r4'} "
             "when reward_fn is not provided."
         )
