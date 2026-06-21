@@ -1,0 +1,24 @@
+{
+  "name": "ppo_markovian_mdd_static",
+  "algorithm": "ppo",
+  "reward_mode": "markovian_mdd",
+  "total_timesteps": 100000,
+  "seed": 42,
+  "device": "cpu",
+  "initial_capital": 10000.0,
+  "transaction_cost_rate": 0.001,
+  "lambda_base": 0.15,
+  "alpha": 0.0,
+  "reward_kwargs": {
+    "lambda_penalty": 0.15
+  },
+  "train_data_path": "D:\\MarkovianMDD_RRC_Trading\\data\\processed\\spy_vix_indicators_train.csv",
+  "validation_data_path": "D:\\MarkovianMDD_RRC_Trading\\data\\processed\\spy_vix_indicators_validation.csv",
+  "test_data_path": "D:\\MarkovianMDD_RRC_Trading\\data\\processed\\spy_vix_indicators_test.csv",
+  "model_dir": "D:\\MarkovianMDD_RRC_Trading\\results\\models\\rl_baselines",
+  "figures_dir": "D:\\MarkovianMDD_RRC_Trading\\results\\figures",
+  "tables_dir": "D:\\MarkovianMDD_RRC_Trading\\results\\tables\\rl_baselines",
+  "algo_kwargs": {},
+  "deterministic_eval": true,
+  "retrain_if_exists": true
+}

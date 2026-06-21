@@ -10,8 +10,8 @@ import pandas as pd
 from gymnasium import spaces
 
 from reward import (
+    build_ppo_hybrid_regime_aware_policy_reward,
     build_differential_sharpe_reward,
-    build_markovian_mdd_rrc_reward,
     build_markovian_mdd_static_reward,
     build_profit_only_reward,
     build_variance_penalized_reward,
@@ -54,6 +54,7 @@ class TradingEnv(gym.Env[np.ndarray, np.ndarray]):
         self.transaction_cost_rate = float(transaction_cost_rate)
         self.min_nav = 1e-12
         self.vix_feature_name = vix_feature_name
+        self.action_prior_weight = float((reward_kwargs or {}).get("action_prior_weight", 0.0))
 
         self.feature_columns = feature_columns or self.DEFAULT_FEATURE_COLUMNS
         self.data = self._load_data(data)
@@ -121,6 +122,9 @@ class TradingEnv(gym.Env[np.ndarray, np.ndarray]):
         if self.vix_feature_name not in self.data.columns:
             raise ValueError(f"Dataset is missing required RRC feature column: {self.vix_feature_name}")
 
+        if not 0.0 <= self.action_prior_weight <= 1.0:
+            raise ValueError("action_prior_weight must be in [0, 1].")
+
     def _resolve_reward_fn(
         self,
         reward_fn: RewardFn | None,
@@ -149,6 +153,9 @@ class TradingEnv(gym.Env[np.ndarray, np.ndarray]):
         resolved_reward_kwargs.setdefault("lambda_penalty", lambda_base)
         resolved_reward_kwargs.setdefault("lambda_base", lambda_base)
         resolved_reward_kwargs.setdefault("alpha", alpha)
+        resolved_reward_kwargs.setdefault("beta_long", 0.1)
+        resolved_reward_kwargs.setdefault("beta_target", 0.02)
+        resolved_reward_kwargs.setdefault("beta_turnover", 0.0015)
         resolved_reward_kwargs.setdefault("vix_feature_name", vix_feature_name)
 
         if normalized_reward_mode in {"variance_penalized", "variance_penalized_return", "r1"}:
@@ -171,21 +178,49 @@ class TradingEnv(gym.Env[np.ndarray, np.ndarray]):
                 drawdown_key=str(resolved_reward_kwargs.get("drawdown_key", "drawdown")),
             )
 
-        if normalized_reward_mode in {"markovian_mdd_rrc", "r4"}:
-            return build_markovian_mdd_rrc_reward(
+        if normalized_reward_mode in {
+            "ppo_hybrid_regime_aware_policy",
+            "ppo_hrap",
+            "hrap",
+        }:
+            return build_ppo_hybrid_regime_aware_policy_reward(
                 lambda_base=float(resolved_reward_kwargs["lambda_base"]),
                 alpha=float(resolved_reward_kwargs["alpha"]),
+                beta_target=float(resolved_reward_kwargs["beta_target"]),
+                beta_turnover=float(resolved_reward_kwargs["beta_turnover"]),
                 vix_feature_name=str(resolved_reward_kwargs["vix_feature_name"]),
+                ret20_feature_name=str(resolved_reward_kwargs.get("ret20_feature_name", "ret_20d")),
+                ma_spread_feature_name=str(
+                    resolved_reward_kwargs.get("ma_spread_feature_name", "ma_spread_5_20")
+                ),
                 clamp_min=float(resolved_reward_kwargs.get("clamp_min", -3.0)),
                 clamp_max=float(resolved_reward_kwargs.get("clamp_max", 3.0)),
+                bull_ret20_threshold=float(resolved_reward_kwargs.get("bull_ret20_threshold", 0.0)),
+                bull_ma_threshold=float(resolved_reward_kwargs.get("bull_ma_threshold", 0.0)),
+                bear_ret20_threshold=float(resolved_reward_kwargs.get("bear_ret20_threshold", 0.0)),
+                bear_ma_threshold=float(resolved_reward_kwargs.get("bear_ma_threshold", 0.0)),
+                stress_threshold=float(resolved_reward_kwargs.get("stress_threshold", 0.80)),
+                crisis_threshold=float(resolved_reward_kwargs.get("crisis_threshold", 1.80)),
+                weight_bull=float(resolved_reward_kwargs.get("weight_bull", 1.0)),
+                weight_bull_stress=float(resolved_reward_kwargs.get("weight_bull_stress", 0.40)),
+                weight_neutral=float(resolved_reward_kwargs.get("weight_neutral", 0.30)),
+                weight_neutral_negative=float(
+                    resolved_reward_kwargs.get("weight_neutral_negative", 0.20)
+                ),
+                weight_bear=float(resolved_reward_kwargs.get("weight_bear", 0.0)),
+                weight_bear_stress=float(resolved_reward_kwargs.get("weight_bear_stress", 0.10)),
+                weight_bear_crisis=float(resolved_reward_kwargs.get("weight_bear_crisis", -0.60)),
                 return_key=str(resolved_reward_kwargs.get("return_key", "portfolio_log_return")),
                 drawdown_key=str(resolved_reward_kwargs.get("drawdown_key", "drawdown")),
+                target_weight_key=str(resolved_reward_kwargs.get("target_weight_key", "target_weight")),
+                turnover_key=str(resolved_reward_kwargs.get("turnover_key", "turnover")),
             )
 
         raise ValueError(
             "reward_mode must be one of "
             "{'default', 'log_return', 'profit_only', 'variance_penalized', 'differential_sharpe', "
-            "'markovian_mdd', 'markovian_mdd_rrc', 'r0', 'r1', 'r2', 'r3', 'r4'} "
+            "'markovian_mdd', 'ppo_hybrid_regime_aware_policy', 'ppo_hrap', 'hrap', "
+            "'r0', 'r1', 'r2', 'r3'} "
             "when reward_fn is not provided."
         )
 
@@ -206,13 +241,18 @@ class TradingEnv(gym.Env[np.ndarray, np.ndarray]):
     def _compute_unrealized_pnl(self) -> float:
         return (self.nav - self.initial_nav) / self.initial_nav
 
+    def _compute_current_drawdown(self) -> float:
+        if self.running_peak <= 0:
+            return 0.0
+        return max(0.0, (self.running_peak - self.nav) / self.running_peak)
+
     def _get_observation(self) -> np.ndarray:
         portfolio_state = np.array(
             [
                 self.current_cash_ratio,
                 self.current_weight,
                 self._compute_unrealized_pnl(),
-                self.running_peak,
+                self._compute_current_drawdown(),
             ],
             dtype=np.float32,
         )
@@ -232,6 +272,7 @@ class TradingEnv(gym.Env[np.ndarray, np.ndarray]):
                 "current_cash_ratio": float(self.current_cash_ratio),
                 "current_weight": float(self.current_weight),
                 "unrealized_pnl": float(self._compute_unrealized_pnl()),
+                "current_drawdown": float(self._compute_current_drawdown()),
                 "running_peak": float(self.running_peak),
             }
         )
@@ -277,11 +318,36 @@ class TradingEnv(gym.Env[np.ndarray, np.ndarray]):
         if self.terminated:
             raise RuntimeError("Episode is done. Call reset() before calling step() again.")
 
-        target_weight = self._parse_action(action)
+        raw_action = self._parse_action(action)
         previous_observation = self._get_observation().copy()
         previous_observation_dict = self._get_observation_dict(self.current_step)
         market_features_t = self._get_market_feature_dict(self.current_step)
         previous_running_peak = self.running_peak
+
+        desired_weight_prior = float("nan")
+        target_weight = raw_action
+        if (
+            self.action_prior_weight > 0.0
+            and self.reward_fn is not None
+            and hasattr(self.reward_fn, "_compute_desired_weight")
+        ):
+            desired_weight_prior = float(
+                self.reward_fn._compute_desired_weight(
+                    {
+                        "market_features_t": market_features_t,
+                        "previous_observation_dict": previous_observation_dict,
+                    },
+                    float(market_features_t[self.vix_feature_name]),
+                )
+            )
+            target_weight = float(
+                np.clip(
+                    ((1.0 - self.action_prior_weight) * raw_action)
+                    + (self.action_prior_weight * desired_weight_prior),
+                    -1.0,
+                    1.0,
+                )
+            )
 
         previous_step = self.current_step
         next_step = previous_step + 1
@@ -341,7 +407,9 @@ class TradingEnv(gym.Env[np.ndarray, np.ndarray]):
             "portfolio_simple_return": portfolio_simple_return,
             "portfolio_log_return": portfolio_log_return,
             "previous_weight": previous_weight,
+            "raw_action": raw_action,
             "target_weight": target_weight,
+            "desired_weight_prior": desired_weight_prior,
             "current_weight": self.current_weight,
             "cash_ratio": self.current_cash_ratio,
             "unrealized_pnl": self._compute_unrealized_pnl(),

@@ -1,63 +1,118 @@
-# Markovian MDD Reward Shaping with Risk-Regime Conditioning for RL Trading
+# PPO Hybrid Regime-Aware Policy for RL Trading
 
-## Overview
+This repository is a research-oriented reinforcement learning trading framework built around a single-asset allocation problem: trading `SPY` against cash under changing volatility regimes. The project benchmarks several reward designs and financial baselines, then evaluates a final proposed method, **PPO Hybrid Regime-Aware Policy (PPO-HRAP)**, which combines drawdown-aware reward shaping, VIX-conditioned risk control, and a regime-guided action prior.
 
-This repository is a lightweight research prototype for **risk-aware reinforcement learning in trading**.
-The project studies how reward design affects portfolio behavior when the agent trades a single risky asset
-(`SPY`) against cash under changing market volatility regimes.
+## Highlights
 
-The main research idea is to compare several reward formulations under a common trading environment:
+- Unified `Gymnasium` trading environment with injective reward design.
+- Financial baselines: Buy & Hold, Risk-Parity proxy, and CPPI.
+- RL baselines: PPO/SAC with profit-only reward, PPO with variance penalty, PPO with static Markovian MDD reward.
+- Proposed method: **PPO-HRAP**, a hybrid policy that uses:
+  - dynamic risk aversion through VIX-based conditioning,
+  - trend-aware directional priors,
+  - PPO fine-tuning around a regime-aware target exposure.
+- Full train/validation/test split with benchmark outputs, regime analysis, and paper-ready figures.
 
-- simple return-based rewards
-- variance-penalized rewards
-- Differential Sharpe Ratio rewards
-- Markovian drawdown-aware rewards
-- drawdown-aware rewards with dynamic risk aversion via **Risk-Regime Conditioning (RRC)**
+## Method Overview
 
-The current codebase is focused on the **data pipeline**, the **Gymnasium trading environment**, and a
-**benchmark-ready reward API** that can later be plugged into PPO or other RL algorithms.
+The final proposed method is not a pure reward-only design. It is a **hybrid control policy**:
 
-## Research Motivation
+1. **Reward shaping**
 
-Many RL trading papers suffer from two practical issues:
+```text
+reward_t
+= log_return_t
+- lambda_rrc(t) * drawdown_increase_t
+- beta_target * (target_weight_t - desired_weight_t)^2
+- beta_turnover * turnover_t
+```
 
-1. **Non-Markovian drawdown penalties**
+2. **Dynamic risk conditioning**
 
-   Maximum Drawdown is often computed from episode-level path statistics that are not included in the state.
-   This breaks the Markov assumption and makes the reward harder to reason about theoretically.
+```text
+lambda_rrc(t) = lambda_base * (1 + alpha * clamp(vix_zscore_t, -3, 3))
+```
 
-2. **Static risk aversion**
+3. **Regime-aware target exposure**
 
-   A fixed drawdown penalty coefficient does not adapt when markets shift from calm to stressed regimes.
+The policy uses SPY trend and VIX stress signals to define a desired exposure profile:
 
-This project addresses both issues by:
+- bullish and calm: aggressive long
+- bullish but stressed: reduced long
+- bearish and stressed: light defensive short / near-flat exposure
+- crisis: stronger short bias
 
-- augmenting the state with `running_peak`
-- computing drawdown directly from stateful portfolio information
-- adjusting the drawdown penalty dynamically using a VIX-based regime signal
+4. **Action blending**
 
-## Current Scope
+The executed target weight is a blend between PPO output and the regime prior:
 
-The repository currently includes:
+```text
+target_weight_t
+= (1 - action_prior_weight) * raw_action_t
++ action_prior_weight * desired_weight_t
+```
 
-- a daily SPY + VIX data ingestion pipeline
-- indicator preprocessing for train/validation/test splits
-- a `Gymnasium` trading environment with continuous actions
-- four benchmark reward functions with a shared callable interface
-- reward injection support for controlled PPO benchmarking later
+This design keeps PPO flexible while discouraging pathological full-long behavior in stressed markets.
 
-The repository does **not yet** include:
+## Benchmark Summary
 
-- PPO training scripts
-- Stable-Baselines3 integration
-- experiment tracking
-- baseline training/evaluation loops
-- result tables or paper-ready figures
+Test period: **2020-01-01 to 2022-12-31**
+
+| Method | Total Return | Annualized Return | Sharpe | Sortino | Calmar | MDD |
+|---|---:|---:|---:|---:|---:|---:|
+| Buy & Hold (SPY) | 0.1760 | 0.0556 | 0.3420 | 0.4251 | 0.1630 | -0.3410 |
+| Risk-Parity Proxy (SPY + Cash) | 0.0799 | 0.0260 | 0.2281 | 0.2848 | 0.0898 | -0.2892 |
+| CPPI (SPY + Cash) | -0.0275 | -0.0093 | -0.0021 | -0.0026 | -0.0427 | -0.2174 |
+| PPO + Profit Only | 0.1760 | 0.0556 | 0.3420 | 0.4251 | 0.1630 | -0.3410 |
+| SAC + Profit Only | 0.1760 | 0.0556 | 0.3420 | 0.4251 | 0.1630 | -0.3410 |
+| PPO + Variance-Penalized Reward | 0.1356 | 0.0434 | 0.3384 | 0.4208 | 0.1829 | -0.2371 |
+| PPO + Static MDD Reward | 0.0591 | 0.0193 | 0.3341 | 0.4153 | 0.2034 | -0.0951 |
+| **PPO-HRAP (Our Proposed Method)** | **0.2762** | **0.0848** | **0.6447** | **0.8588** | **0.4592** | **-0.1847** |
+
+Primary result file: [results/tables/ppo_hybrid_regime_aware_policy/proposed_method_metrics.csv](results/tables/ppo_hybrid_regime_aware_policy/proposed_method_metrics.csv)
+
+## Figures
+
+### All-Method Equity Comparison
+
+![Backtest of All Methods](results/figures/backtest_all_methods_equity_comparison.png)
+
+### Proposed Method With VIX Regime Overlay
+
+![Proposed Equity With Regimes](results/figures/ppo_hybrid_regime_aware_policy/proposed_equity_with_regimes.png)
+
+### Dynamic Risk Conditioning: VIX vs Lambda
+
+![Lambda vs VIX](results/figures/ppo_hybrid_regime_aware_policy/lambda_rrc_vs_vix.png)
+
+### Proposed vs Static MDD in Stress Regimes
+
+![Regime Comparison](results/figures/ppo_hybrid_regime_aware_policy/regime_bar_proposed_vs_static.png)
+
+### Pareto Frontier
+
+![Pareto Frontier](results/figures/ppo_hybrid_regime_aware_policy/pareto_return_vs_mdd.png)
 
 ## Repository Structure
 
 ```text
-MarkovianMDD_RRC_Trading/
+PPO_Hybrid_Regime_Aware_Policy/
+|-- baselines/
+|   |-- financial/
+|   |   `-- financial_baselines.py
+|   |-- rl/
+|   |   |-- rl_baseline_common.py
+|   |   |-- evaluate_rl_baselines.py
+|   |   |-- run_all_rl_baselines.py
+|   |   |-- train_ppo_profit_only.py
+|   |   |-- train_sac_profit_only.py
+|   |   |-- train_ppo_variance_penalized.py
+|   |   `-- train_ppo_markovian_mdd_static.py
+|   |-- ppo_hybrid_regime_aware_policy/
+|   |   |-- pipeline.py
+|   |   `-- run_proposed_method.py
+|   |-- analysis_utils.py
+|   `-- metrics.py
 |-- data/
 |   |-- crawl_data.py
 |   |-- preprocess_indicator_signals.py
@@ -66,344 +121,150 @@ MarkovianMDD_RRC_Trading/
 |-- env/
 |   `-- trading_env.py
 |-- reward/
-|   |-- __init__.py
+|   |-- profit_only.py
 |   |-- variance_penalized.py
 |   |-- differential_sharpe.py
 |   |-- markovian_mdd_static.py
-|   |-- markovian_mdd.py
+|   |-- ppo_hybrid_regime_aware_policy.py
 |   `-- rrc.py
 |-- results/
 |   |-- figures/
+|   |-- models/
 |   `-- tables/
-|-- tests/
 |-- requirements.txt
 `-- README.md
 ```
 
-## Trading Problem Setup
-
-### Asset Universe
-
-- **Primary asset:** `SPY`
-- **Risk signal:** `^VIX`
-- **Portfolio:** `SPY` and cash
-
-### Action Space
-
-- Continuous action `w in [-1, 1]`
-- `w` is interpreted as the target portfolio weight on the risky asset
-
-### Observation Space
-
-The environment observation contains:
-
-- market features
-- portfolio cash ratio
-- current risky-asset weight
-- unrealized PnL
-- `running_peak`
-
-Default market features:
-
-- `log_return`
-- `sma_ratio`
-- `rsi_14`
-- `bollinger_band_width`
-- `vix_zscore_252`
-
-### Portfolio Dynamics
-
-The environment currently models:
-
-- next-step price transition using daily close-to-close returns
-- target-weight reallocation
-- turnover-based transaction cost
-- NAV evolution
-- running peak tracking
-- Markovian drawdown tracking
-
-### Transaction Cost
-
-- `0.1%` per unit turnover via `transaction_cost_rate=0.001`
-
 ## Data
 
-### Time Splits
+### Universe
 
-- **Train:** `2010-01-01` to `2017-12-31`
-- **Validation:** `2018-01-01` to `2019-12-31`
-- **Test:** `2020-01-01` to `2022-12-31`
+- Risky asset: `SPY`
+- Risk signal: `^VIX`
+- Portfolio: `SPY` + cash
 
-The test window includes both the **2020 COVID crash** and the **2022 bear market**.
+### Splits
 
-### Raw Data Pipeline
+- Train: `2010-01-01` to `2017-12-31`
+- Validation: `2018-01-01` to `2019-12-31`
+- Test: `2020-01-01` to `2022-12-31`
 
-Script: [data/crawl_data.py](data/crawl_data.py)
+### Processed Features
 
-What it does:
-
-- downloads daily `SPY` OHLCV data from `yfinance`
-- downloads daily `^VIX` close data
-- aligns both series by date
-- writes split CSV files into `data/raw`
-
-Generated files:
-
-```text
-data/raw/spy_vix_train.csv
-data/raw/spy_vix_validation.csv
-data/raw/spy_vix_test.csv
-```
-
-### Feature Engineering Pipeline
-
-Script: [data/preprocess_indicator_signals.py](data/preprocess_indicator_signals.py)
-
-Computed features:
+Core market features used in the environment and proposed method include:
 
 - `log_return`
 - `sma_ratio`
 - `rsi_14`
 - `bollinger_band_width`
 - `vix_zscore_252`
+- `ret_5d`
+- `ret_20d`
+- `ma_spread_5_20`
+- `vix_change_5d`
 
-Generated files:
+Processed datasets:
 
-```text
-data/processed/spy_vix_indicators_train.csv
-data/processed/spy_vix_indicators_validation.csv
-data/processed/spy_vix_indicators_test.csv
-```
-
-Note:
-
-- the train split can contain warmup `NaN` values from rolling indicators
-- you can remove these rows with the `--drop-na` option during preprocessing
+- [data/processed/spy_vix_indicators_train.csv](data/processed/spy_vix_indicators_train.csv)
+- [data/processed/spy_vix_indicators_validation.csv](data/processed/spy_vix_indicators_validation.csv)
+- [data/processed/spy_vix_indicators_test.csv](data/processed/spy_vix_indicators_test.csv)
 
 ## Reward Library
 
-All reward functions live in `reward/` and follow a common callable pattern:
+Implemented reward functions:
+
+- `profit_only` / `r0`
+- `variance_penalized` / `r1`
+- `differential_sharpe` / `r2`
+- `markovian_mdd` / `r3`
+- `ppo_hybrid_regime_aware_policy` / `ppo_hrap` / `hrap`
+
+The reward API is callable and environment-friendly:
 
 ```python
 reward = reward_fn(env, transition)
 ```
 
-This makes them easy to inject into the environment for later PPO benchmarking.
+Main environment file: [env/trading_env.py](env/trading_env.py)
 
-### R0: Log Return Baseline
-
-Default environment reward:
-
-```text
-reward_t = portfolio_log_return_t
-```
-
-This is used when `reward_mode="default"` or when no custom reward function is injected.
-
-### R1: Variance-Penalized Return
-
-File: [reward/variance_penalized.py](reward/variance_penalized.py)
-
-Formula:
-
-```text
-reward_t = log_return_t - lambda * portfolio_variance_t
-```
-
-Current implementation details:
-
-- default `lambda = 1.0`
-- variance is tracked online within each episode
-- reward state is reset automatically at `env.reset()`
-
-### R2: Differential Sharpe Ratio
-
-File: [reward/differential_sharpe.py](reward/differential_sharpe.py)
-
-This reward uses EMA statistics of returns and computes a differential Sharpe-style signal inspired by
-Moody and Saffell (2001).
-
-Current implementation details:
-
-- default EMA step size `eta = 0.01`
-- online mean and second-moment updates
-- reward state is reset automatically at `env.reset()`
-
-### R3: Markovian MDD Reward with Static Lambda
-
-File: [reward/markovian_mdd_static.py](reward/markovian_mdd_static.py)
-
-Formula:
-
-```text
-drawdown_t = max(0, running_peak_t - NAV_t) / running_peak_t
-reward_t = log_return_t - lambda * drawdown_t
-```
-
-Current implementation details:
-
-- default `lambda = 1.0`
-- uses `running_peak` maintained by the environment
-- keeps drawdown penalty fully compatible with the Markov state design
-
-### R4: Markovian MDD + Risk-Regime Conditioning
-
-Files:
-
-- [reward/markovian_mdd.py](reward/markovian_mdd.py)
-- [reward/rrc.py](reward/rrc.py)
-
-Formula:
-
-```text
-lambda_rrc(t) = lambda_base * (1 + alpha * clamp(vix_zscore_t, -3, 3))
-reward_t = log_return_t - lambda_rrc(t) * drawdown_t
-```
-
-Current implementation details:
-
-- default `lambda_base = 1.0`
-- default `alpha = 0.0`
-- VIX z-score is clipped to `[-3, 3]`
-- resulting lambda is floored at `0.0`
-
-## Trading Environment
-
-Main file: [env/trading_env.py](env/trading_env.py)
-
-The environment is designed for reward benchmarking and exposes a rich `transition` dictionary to the
-reward function on every step.
-
-Key transition fields include:
-
-- `portfolio_log_return`
-- `drawdown`
-- `nav`
-- `previous_nav`
-- `running_peak`
-- `turnover`
-- `transaction_cost`
-- `vix_zscore_t`
-- `market_features_t`
-
-### Reward Injection Modes
-
-You can use the built-in reward selector:
-
-- `default` or `r0`
-- `variance_penalized` or `r1`
-- `differential_sharpe` or `r2`
-- `markovian_mdd` or `r3`
-- `markovian_mdd_rrc` or `r4`
-
-Or you can inject a reward object directly through `reward_fn`.
-
-### Example: Built-In Reward Modes
-
-```python
-from env.trading_env import TradingEnv
-
-env = TradingEnv(
-    data="data/processed/spy_vix_indicators_validation.csv",
-    reward_mode="r4",
-    lambda_base=1.0,
-    alpha=0.2,
-)
-```
-
-### Example: Direct Reward Injection
-
-```python
-from env.trading_env import TradingEnv
-from reward import build_differential_sharpe_reward
-
-env = TradingEnv(
-    data="data/processed/spy_vix_indicators_validation.csv",
-    reward_fn=build_differential_sharpe_reward(eta=0.05),
-)
-```
-
-### Example: Reward-Specific Keyword Arguments
-
-```python
-from env.trading_env import TradingEnv
-
-env = TradingEnv(
-    data="data/processed/spy_vix_indicators_validation.csv",
-    reward_mode="r2",
-    reward_kwargs={"eta": 0.05, "epsilon": 1e-12},
-)
-```
-
-## Setup
-
-Create a virtual environment and install dependencies:
+## Installation
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python -m pip install -r requirements.txt
 ```
 
-Current dependencies:
+Main dependencies:
 
 - `pandas`
 - `numpy`
 - `yfinance`
 - `gymnasium`
+- `matplotlib`
+- `stable-baselines3`
 
-## Data Preparation
+## Reproducibility
 
-Download and split raw data:
+### 1. Download and preprocess data
 
 ```powershell
 .\.venv\Scripts\python data\crawl_data.py
-```
-
-Preprocess features:
-
-```powershell
 .\.venv\Scripts\python data\preprocess_indicator_signals.py
 ```
 
-Drop rolling-window warmup rows if needed:
+### 2. Run financial baselines
 
 ```powershell
-.\.venv\Scripts\python data\preprocess_indicator_signals.py --drop-na
+.\.venv\Scripts\python baselines\financial\financial_baselines.py
 ```
 
-## Current Project Status
+### 3. Run RL baselines
 
-### Implemented
+```powershell
+.\.venv\Scripts\python baselines\rl\run_all_rl_baselines.py
+```
 
-- SPY + VIX data ingestion
-- feature preprocessing and split generation
-- Gymnasium trading environment
-- reward benchmark library with 4 research reward formulations
-- reward-state reset support for stateful rewards
-- reward injection API for later PPO experiments
+### 4. Run the proposed method
 
-### Not Yet Implemented
+```powershell
+.\.venv\Scripts\python baselines\ppo_hybrid_regime_aware_policy\run_proposed_method.py
+```
 
-- PPO training pipeline
-- Stable-Baselines3 dependency integration
-- benchmark runner across reward functions
-- financial baselines such as Buy & Hold, Risk Parity, or CPPI
-- evaluation scripts, plots, and result tables
-- automated tests
+## Key Output Files
 
-## Recommended Next Steps
+### Proposed method
 
-1. Add `stable-baselines3` and a PPO training script.
-2. Build a benchmark runner that loops over `r0` to `r4`.
-3. Add validation/test evaluation metrics such as return, volatility, Sharpe, max drawdown, and turnover.
-4. Export experiment outputs into `results/tables` and `results/figures`.
-5. Add reproducible configs and tests for reward correctness.
+- [results/tables/ppo_hybrid_regime_aware_policy/proposed_method_metrics.csv](results/tables/ppo_hybrid_regime_aware_policy/proposed_method_metrics.csv)
+- [results/tables/ppo_hybrid_regime_aware_policy/proposed_method_portfolios.csv](results/tables/ppo_hybrid_regime_aware_policy/proposed_method_portfolios.csv)
+- [results/tables/ppo_hybrid_regime_aware_policy/best_config.json](results/tables/ppo_hybrid_regime_aware_policy/best_config.json)
 
-## Project Goal
+### Aggregate comparisons
 
-The broader goal is to build a compact RL trading research framework that is:
+- [results/tables/all_methods_metrics.csv](results/tables/all_methods_metrics.csv)
+- [results/tables/all_methods_regime_metrics.csv](results/tables/all_methods_regime_metrics.csv)
 
-- theoretically cleaner than episode-level drawdown penalties
-- flexible enough to compare multiple reward designs fairly
-- practical for constrained academic compute budgets
-- extendable toward PPO-based reward benchmarking and regime-aware evaluation
+### Baseline tables
+
+- [results/tables/financial baselines/financial_baselines_metrics.csv](<results/tables/financial baselines/financial_baselines_metrics.csv>)
+- [results/tables/rl_baselines/rl_baselines_metrics.csv](results/tables/rl_baselines/rl_baselines_metrics.csv)
+
+## Current Status
+
+This repository is now in a solid **benchmark-ready research state**:
+
+- environment design is stable,
+- baseline pipelines are implemented,
+- the proposed hybrid policy is trained and evaluated,
+- figures are regenerated from the latest results,
+- outputs are organized for analysis and paper writing.
+
+The next natural extensions are:
+
+- multi-seed evaluation,
+- transaction-cost sensitivity studies,
+- ablation of action prior vs reward shaping,
+- additional assets and multi-asset allocation.
+
+## License / Usage Note
+
+This repository is structured as an academic research prototype. Please verify assumptions, data handling, and evaluation settings before reusing it for production trading.

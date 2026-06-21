@@ -13,7 +13,7 @@ import pandas as pd
 
 os.environ.setdefault(
     "MPLCONFIGDIR",
-    str(Path(tempfile.gettempdir()) / "markovian_mdd_rrc_trading_mpl"),
+    str(Path(tempfile.gettempdir()) / "ppo_hybrid_regime_aware_policy_mpl"),
 )
 
 import matplotlib
@@ -21,11 +21,12 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 from stable_baselines3 import PPO, SAC
 from stable_baselines3.common.base_class import BaseAlgorithm
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -56,6 +57,7 @@ class RLBaselineConfig:
     transaction_cost_rate: float = TRANSACTION_COST_RATE
     lambda_base: float = 1.0
     alpha: float = 0.0
+    feature_columns: list[str] | None = None
     reward_kwargs: dict[str, Any] = field(default_factory=dict)
     train_data_path: Path = TRAIN_DATA_PATH
     validation_data_path: Path = VALIDATION_DATA_PATH
@@ -78,18 +80,65 @@ def _to_jsonable(value: Any) -> Any:
     return value
 
 
-def load_market_data(data_path: str | Path) -> pd.DataFrame:
+def load_market_data(
+    data_path: str | Path,
+    feature_columns: list[str] | None = None,
+) -> pd.DataFrame:
+    data_path = Path(data_path)
     frame = pd.read_csv(data_path, parse_dates=["date"])
     frame = frame.sort_values("date").reset_index(drop=True)
+    original_start_date = frame["date"].min()
+    original_end_date = frame["date"].max()
 
-    required_columns = set(["date", "close"] + TradingEnv.DEFAULT_FEATURE_COLUMNS)
+    derived_lookbacks = {
+        "ret_5d": 5,
+        "ret_20d": 20,
+        "ma_5": 5,
+        "ma_20": 20,
+        "ma_spread_5_20": 20,
+        "vix_change_5d": 5,
+    }
+    resolved_feature_columns = feature_columns or TradingEnv.DEFAULT_FEATURE_COLUMNS
+    required_lookback = max(
+        [derived_lookbacks[column] for column in resolved_feature_columns if column in derived_lookbacks],
+        default=0,
+    )
+
+    warmup_frame: pd.DataFrame | None = None
+    if required_lookback > 0:
+        candidate_warmup_path: Path | None = None
+        if data_path.name == "spy_vix_indicators_validation.csv":
+            candidate_warmup_path = data_path.with_name("spy_vix_indicators_train.csv")
+        elif data_path.name == "spy_vix_indicators_test.csv":
+            candidate_warmup_path = data_path.with_name("spy_vix_indicators_validation.csv")
+
+        if candidate_warmup_path is not None and candidate_warmup_path.exists():
+            warmup_frame = pd.read_csv(candidate_warmup_path, parse_dates=["date"])
+            warmup_frame = warmup_frame.sort_values("date").reset_index(drop=True).tail(required_lookback)
+
+    if warmup_frame is not None and not warmup_frame.empty:
+        frame = pd.concat([warmup_frame, frame], ignore_index=True)
+        frame = frame.sort_values("date").reset_index(drop=True)
+
+    if "close" in frame.columns:
+        close = frame["close"].astype(float)
+        frame["ret_5d"] = close.pct_change(5)
+        frame["ret_20d"] = close.pct_change(20)
+        frame["ma_5"] = close.rolling(5).mean()
+        frame["ma_20"] = close.rolling(20).mean()
+        frame["ma_spread_5_20"] = (frame["ma_5"] / frame["ma_20"]) - 1.0
+    if "vix_close" in frame.columns:
+        frame["vix_change_5d"] = frame["vix_close"].astype(float).pct_change(5)
+
+    required_columns = set(["date", "close"] + resolved_feature_columns)
     missing_columns = sorted(required_columns.difference(frame.columns))
     if missing_columns:
         raise ValueError(f"Dataset is missing required columns: {missing_columns}")
 
-    cleaned = frame.dropna(
-        subset=["close"] + TradingEnv.DEFAULT_FEATURE_COLUMNS
-    ).reset_index(drop=True)
+    cleaned = frame.dropna(subset=["close"] + resolved_feature_columns).reset_index(drop=True)
+    cleaned = cleaned.loc[
+        (cleaned["date"] >= original_start_date) & (cleaned["date"] <= original_end_date)
+    ].reset_index(drop=True)
     if len(cleaned) < 2:
         raise ValueError(f"Dataset '{data_path}' does not contain enough valid rows after dropping NaNs.")
     return cleaned
@@ -99,6 +148,7 @@ def make_trading_env(
     data: pd.DataFrame,
     reward_mode: str,
     *,
+    feature_columns: list[str] | None = None,
     reward_kwargs: dict[str, Any] | None = None,
     lambda_base: float = 1.0,
     alpha: float = 0.0,
@@ -107,6 +157,7 @@ def make_trading_env(
 ) -> TradingEnv:
     return TradingEnv(
         data=data,
+        feature_columns=feature_columns,
         initial_nav=initial_capital,
         transaction_cost_rate=transaction_cost_rate,
         reward_mode=reward_mode,
@@ -166,10 +217,11 @@ def train_model(config: RLBaselineConfig) -> Path:
     if model_zip_path.exists() and not config.retrain_if_exists:
         return model_zip_path
 
-    train_data = load_market_data(config.train_data_path)
+    train_data = load_market_data(config.train_data_path, feature_columns=config.feature_columns)
     train_env = make_trading_env(
         data=train_data,
         reward_mode=config.reward_mode,
+        feature_columns=config.feature_columns,
         reward_kwargs=config.reward_kwargs,
         lambda_base=config.lambda_base,
         alpha=config.alpha,
@@ -204,10 +256,11 @@ def evaluate_saved_model(
     config: RLBaselineConfig,
     model_path: str | Path,
 ) -> dict[str, pd.Series | pd.DataFrame | dict[str, float] | str]:
-    test_data = load_market_data(config.test_data_path)
+    test_data = load_market_data(config.test_data_path, feature_columns=config.feature_columns)
     test_env = make_trading_env(
         data=test_data,
         reward_mode=config.reward_mode,
+        feature_columns=config.feature_columns,
         reward_kwargs=config.reward_kwargs,
         lambda_base=config.lambda_base,
         alpha=config.alpha,
@@ -224,6 +277,10 @@ def evaluate_saved_model(
     weights = [float(info["current_weight"])]
     cash_ratios = [float(info["cash_ratio"])]
     rewards = [0.0]
+    drawdowns = [float(info["drawdown"])]
+    lambda_rrc_values = [float(info.get("lambda_rrc", np.nan))]
+    vix_zscore_values = [float(info.get("vix_zscore_t", np.nan))]
+    nav_after_cost_values = [float(info.get("nav", info["nav"]))]
 
     terminated = False
     truncated = False
@@ -239,6 +296,10 @@ def evaluate_saved_model(
         weights.append(float(info["current_weight"]))
         cash_ratios.append(float(info["cash_ratio"]))
         rewards.append(float(reward))
+        drawdowns.append(float(info["drawdown"]))
+        lambda_rrc_values.append(float(info.get("lambda_rrc", np.nan)))
+        vix_zscore_values.append(float(info.get("vix_zscore_t", np.nan)))
+        nav_after_cost_values.append(float(info.get("nav_after_cost", info["nav"])))
 
     index = pd.DatetimeIndex(dates, name="date")
     portfolio_value_series = pd.Series(portfolio_values, index=index, name="portfolio_value")
@@ -253,6 +314,10 @@ def evaluate_saved_model(
             "weight_spy": pd.Series(weights, index=index),
             "weight_cash": pd.Series(cash_ratios, index=index),
             "reward": pd.Series(rewards, index=index),
+            "drawdown": pd.Series(drawdowns, index=index),
+            "lambda_rrc": pd.Series(lambda_rrc_values, index=index),
+            "vix_zscore_t": pd.Series(vix_zscore_values, index=index),
+            "nav_after_cost": pd.Series(nav_after_cost_values, index=index),
         }
     )
 
@@ -308,7 +373,18 @@ def plot_rl_equity_curves(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     plt.style.use("seaborn-v0_8-whitegrid")
-    fig, ax = plt.subplots(figsize=(10, 6), dpi=200)
+    plt.rcParams.update(
+        {
+            "font.size": 11,
+            "axes.titlesize": 16,
+            "axes.titleweight": "bold",
+            "axes.labelsize": 12,
+            "legend.fontsize": 10,
+            "xtick.labelsize": 10,
+            "ytick.labelsize": 10,
+        }
+    )
+    fig, ax = plt.subplots(figsize=(13, 7), dpi=300)
 
     label_map = {
         "ppo_profit_only": "PPO + Profit Only",
@@ -328,21 +404,26 @@ def plot_rl_equity_curves(
         ax.plot(
             series.index,
             series.values,
-            linewidth=2.0,
+            linewidth=2.3,
             color=color_map.get(baseline_name),
             label=label_map.get(baseline_name, baseline_name),
         )
 
-    ax.set_title("RL Baselines Equity Curve Comparison", fontsize=14, weight="bold")
+    ax.set_title("Backtest of RL Baselines: Equity Curve Comparison")
     ax.set_xlabel("Date")
     ax.set_ylabel("Portfolio Value (USD)")
-    ax.legend(frameon=True)
-    ax.grid(True, alpha=0.25)
+    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=4))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
+    plt.setp(ax.get_xticklabels(), rotation=30, ha="right")
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.16), ncol=2, frameon=True)
+    ax.grid(True, alpha=0.4, linewidth=0.8)
 
     for spine in ("top", "right"):
         ax.spines[spine].set_visible(False)
+    ax.spines["left"].set_color("#444444")
+    ax.spines["bottom"].set_color("#444444")
 
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0, 1, 0.92))
     fig.savefig(output_path, bbox_inches="tight")
     plt.close(fig)
 

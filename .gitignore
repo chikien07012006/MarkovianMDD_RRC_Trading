@@ -1,10 +1,17 @@
 .venv/
 __pycache__/
 *.pyc
+*.pyo
 
-data/raw/*.csv
-data/processed/*.csv
+# OS / editor noise
+.DS_Store
+Thumbs.db
 
+# Local raw downloads can be regenerated
+data/raw/
+
+# Trained model binaries are reproducible artifacts
+results/models/
+
+# Local one-off files
 medmigcr-survey.html
-results/models
-results/tables

@@ -1,0 +1,44 @@
+{
+  "selected_by": "validation_calmar_with_anti_full_long_action_prior_search",
+  "searched_action_prior_weight": [
+    0.7,
+    0.6,
+    0.5,
+    0.4,
+    0.3
+  ],
+  "best_name": "ppo_hybrid_regime_aware_policy",
+  "reward_mode": "ppo_hybrid_regime_aware_policy",
+  "lambda_base": 0.05,
+  "alpha": 0.5,
+  "beta_target": 0.02,
+  "action_prior_weight": 0.6,
+  "timesteps": 30000,
+  "seed": 42,
+  "algo_kwargs": {
+    "learning_rate": 0.0001,
+    "n_steps": 1024,
+    "batch_size": 128,
+    "n_epochs": 10,
+    "ent_coef": 0.0
+  },
+  "validation_metrics": {
+    "Total Return": 0.07999137274989288,
+    "Annualized Return": 0.039385652010140326,
+    "Sharpe Ratio": 0.48626414831197334,
+    "Sortino Ratio": 0.618704773143763,
+    "Calmar Ratio": 0.2299155691771343,
+    "MDD": -0.17130484965024861,
+    "Turnover": 31.311574463965982
+  },
+  "validation_behavior": {
+    "mean_weight": 0.7045113460626096,
+    "max_weight": 1.0,
+    "min_weight": -0.36350546556622937,
+    "pct_full_long": 0.5745526838966203,
+    "pct_short": 0.0775347912524851,
+    "avg_weight_high_vix": 0.43777522717242817,
+    "avg_weight_low_vix": 0.9402781028344552
+  },
+  "behavior_filter_passed": true
+}

@@ -13,7 +13,7 @@ import pandas as pd
 
 os.environ.setdefault(
     "MPLCONFIGDIR",
-    str(Path(tempfile.gettempdir()) / "markovian_mdd_rrc_trading_mpl"),
+    str(Path(tempfile.gettempdir()) / "ppo_hybrid_regime_aware_policy_mpl"),
 )
 
 import matplotlib
@@ -21,11 +21,12 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 
 from baselines.metrics import TRADING_DAYS_PER_YEAR, compute_performance_metrics
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TEST_DATA_PATH = PROJECT_ROOT / "data" / "processed" / "spy_vix_indicators_test.csv"
 DEFAULT_RESULTS_DIR = PROJECT_ROOT / "results"
 DEFAULT_FIGURES_DIR = DEFAULT_RESULTS_DIR / "figures"
@@ -300,7 +301,18 @@ def plot_equity_curves(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     plt.style.use("seaborn-v0_8-whitegrid")
-    fig, ax = plt.subplots(figsize=(10, 6), dpi=200)
+    plt.rcParams.update(
+        {
+            "font.size": 11,
+            "axes.titlesize": 16,
+            "axes.titleweight": "bold",
+            "axes.labelsize": 12,
+            "legend.fontsize": 10,
+            "xtick.labelsize": 10,
+            "ytick.labelsize": 10,
+        }
+    )
+    fig, ax = plt.subplots(figsize=(13, 7), dpi=300)
 
     color_map = {
         "buy_and_hold_spy": "#1f77b4",
@@ -318,21 +330,26 @@ def plot_equity_curves(
         ax.plot(
             portfolio_value.index,
             portfolio_value.values,
-            linewidth=2.0,
+            linewidth=2.3,
             color=color_map.get(baseline_name, None),
             label=label_map.get(baseline_name, baseline_name),
         )
 
-    ax.set_title("Financial Baselines Equity Curve Comparison", fontsize=14, weight="bold")
+    ax.set_title("Backtest of Financial Baselines: Equity Curve Comparison")
     ax.set_xlabel("Date")
     ax.set_ylabel("Portfolio Value (USD)")
-    ax.legend(frameon=True)
-    ax.grid(True, alpha=0.25)
+    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=4))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
+    plt.setp(ax.get_xticklabels(), rotation=30, ha="right")
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.16), ncol=3, frameon=True)
+    ax.grid(True, alpha=0.4, linewidth=0.8)
 
     for spine in ("top", "right"):
         ax.spines[spine].set_visible(False)
+    ax.spines["left"].set_color("#444444")
+    ax.spines["bottom"].set_color("#444444")
 
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0, 1, 0.92))
     fig.savefig(output_path, bbox_inches="tight")
     plt.close(fig)
 

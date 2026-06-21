@@ -4,15 +4,15 @@ import sys
 from pathlib import Path
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from baselines.rl_baseline_common import run_multiple_rl_baselines
-from baselines.train_ppo_markovian_mdd_static import build_config as build_ppo_markovian_mdd_static_config
-from baselines.train_ppo_profit_only import build_config as build_ppo_profit_only_config
-from baselines.train_ppo_variance_penalized import build_config as build_ppo_variance_penalized_config
-from baselines.train_sac_profit_only import build_config as build_sac_profit_only_config
+from baselines.rl.rl_baseline_common import run_multiple_rl_baselines
+from baselines.rl.train_ppo_markovian_mdd_static import build_config as build_ppo_markovian_mdd_static_config
+from baselines.rl.train_ppo_profit_only import build_config as build_ppo_profit_only_config
+from baselines.rl.train_ppo_variance_penalized import build_config as build_ppo_variance_penalized_config
+from baselines.rl.train_sac_profit_only import build_config as build_sac_profit_only_config
 
 
 def main() -> None:

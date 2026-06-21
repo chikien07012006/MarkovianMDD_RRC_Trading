@@ -1,1 +1,1 @@
-"""Baseline utilities and benchmark entrypoints."""
+"""Baseline utilities and organized benchmark entrypoints."""

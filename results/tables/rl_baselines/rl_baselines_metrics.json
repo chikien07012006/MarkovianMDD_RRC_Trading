@@ -1,0 +1,50 @@
+{
+  "ppo_profit_only": {
+    "metrics": {
+      "Total Return": 0.1760013803222824,
+      "Annualized Return": 0.05560238382394034,
+      "Sharpe Ratio": 0.3420013791731917,
+      "Sortino Ratio": 0.4251109202175363,
+      "Calmar Ratio": 0.16303414887666284,
+      "MDD": -0.3410474689324392,
+      "Turnover": 1.0
+    },
+    "model_path": "D:\\MarkovianMDD_RRC_Trading\\results\\models\\rl_baselines\\ppo_profit_only.zip"
+  },
+  "sac_profit_only": {
+    "metrics": {
+      "Total Return": 0.1760013803222824,
+      "Annualized Return": 0.05560238382394034,
+      "Sharpe Ratio": 0.3420013791731917,
+      "Sortino Ratio": 0.4251109202175363,
+      "Calmar Ratio": 0.16303414887666284,
+      "MDD": -0.3410474689324392,
+      "Turnover": 1.0
+    },
+    "model_path": "D:\\MarkovianMDD_RRC_Trading\\results\\models\\rl_baselines\\sac_profit_only.zip"
+  },
+  "ppo_variance_penalized": {
+    "metrics": {
+      "Total Return": 0.13560094351090446,
+      "Annualized Return": 0.04335707126994515,
+      "Sharpe Ratio": 0.33843173354809064,
+      "Sortino Ratio": 0.4207887255252503,
+      "Calmar Ratio": 0.18288851417787994,
+      "MDD": -0.23706831161510478,
+      "Turnover": 2.4444322604304713
+    },
+    "model_path": "D:\\MarkovianMDD_RRC_Trading\\results\\models\\rl_baselines\\ppo_variance_penalized.zip"
+  },
+  "ppo_markovian_mdd_static": {
+    "metrics": {
+      "Total Return": 0.05905440719797661,
+      "Annualized Return": 0.0193353652346675,
+      "Sharpe Ratio": 0.3340533341248274,
+      "Sortino Ratio": 0.41529047410704323,
+      "Calmar Ratio": 0.20338414640368427,
+      "MDD": -0.09506820259377524,
+      "Turnover": 1.7590673332660454
+    },
+    "model_path": "D:\\MarkovianMDD_RRC_Trading\\results\\models\\rl_baselines\\ppo_markovian_mdd_static.zip"
+  }
+}
